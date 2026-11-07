@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Submit Common Lisp through the user's Emacs/SLY connection."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+
+def lisp_string(text):
+    # Emacs Lisp string syntax. Source itself travels as UTF-8 in a file.
+    return '"' + text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
+
+
+def evaluate_via_files(source, timeout):
+    root = Path(__file__).resolve().parent
+    mailbox = Path(os.environ.get("ARDD_MAILBOX", root / ".ardd"))
+    requests, results = mailbox / "requests", mailbox / "results"
+    if not requests.is_dir() or not results.is_dir():
+        raise ValueError("Run M-x mathbook-ardd-use-connection in Emacs first")
+    request_id = uuid.uuid4().hex
+    request = requests / (request_id + ".json")
+    reply = results / (request_id + ".json")
+    temporary = requests / (request_id + ".pending")
+    try:
+        temporary.write_text(json.dumps({"source": source,
+                                         "expires_at": time.time() + timeout}), encoding="utf-8")
+        temporary.replace(request)
+        deadline = time.monotonic() + timeout
+        while not reply.exists():
+            if time.monotonic() >= deadline:
+                try:
+                    request.unlink()
+                except FileNotFoundError:
+                    if reply.exists():
+                        break
+                    raise ValueError("Timed out after the request was claimed; it may still "
+                                     f"execute. Inspect Emacs before retrying. Reply: {reply}")
+                raise ValueError("Timed out waiting for Emacs; queued request cancelled")
+            time.sleep(0.05)
+        result = json.loads(reply.read_text(encoding="utf-8"))
+        reply.unlink()
+        if not result["ok"]:
+            raise ValueError(result["error"])
+        print(result["result"], end="")
+        return 0
+    finally:
+        temporary.unlink(missing_ok=True)
+        # Also cancel an unclaimed request if the caller interrupts the CLI.
+        request.unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--transport", choices=["files", "emacsclient"], default="files",
+                        help="agent-to-Emacs transport (default: project files)")
+    parser.add_argument("--timeout", type=float, default=30,
+                        help="seconds to wait for a file reply (default: 30)")
+    parser.add_argument("--socket-name", default=os.environ.get("ARDD_EMACS_SOCKET"),
+                        help="Emacs server name/socket (default: emacsclient's default)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    evaluate = commands.add_parser("eval", help="evaluate Lisp, or read stdin with -")
+    evaluate.add_argument("source")
+    load = commands.add_parser("load", help="load a saved Lisp file in the live process")
+    load.add_argument("file", type=Path)
+    commands.add_parser("status", help="inspect development runtime status")
+    args = parser.parse_args()
+    if args.command == "eval":
+        source = sys.stdin.read() if args.source == "-" else args.source
+    elif args.command == "load":
+        file = args.file.resolve(strict=True)
+        # A Common Lisp string literal has the same escaping for these characters.
+        source = '(load "' + str(file).replace('\\', '\\\\').replace('"', '\\"') + '")'
+    else:
+        source = "(mathbook-dev:status)"
+
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    if args.transport == "files":
+        if args.socket_name:
+            parser.error("--socket-name requires --transport emacsclient")
+        return evaluate_via_files(source, args.timeout)
+
+    client = [os.environ.get("EMACSCLIENT", "emacsclient"), "--alternate-editor=false"]
+    if args.socket_name:
+        client += ["--socket-name", args.socket_name]
+    with tempfile.TemporaryDirectory(prefix="mathbook-ardd-") as directory:
+        file = Path(directory) / "evaluation.lisp"
+        file.write_text(source, encoding="utf-8")
+        expression = "(mathbook-ardd-eval-file " + lisp_string(str(file)) + ")"
+        # No shell interpolation: Lisp source is never executed as shell code.
+        return subprocess.run(client + ["--eval", expression], check=False).returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError) as error:
+        print(f"ardd: {error}", file=sys.stderr)
+        sys.exit(1)

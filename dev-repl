@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+cd -- "$(dirname -- "$0")"
+
+# Use the same SLY checkout/version as Emacs. No editor configuration is changed.
+SLY_DIR=${1:-${SLY_DIR:-}}
+if [ -z "$SLY_DIR" ] || [ ! -f "$SLY_DIR/slynk/slynk.asd" ]; then
+  echo 'Usage: ./dev-repl /absolute/path/to/sly (directory containing sly.el)' >&2
+  exit 2
+fi
+export SLY_DIR
+exec sbcl --noinform --disable-debugger --load dev/start.lisp
