@@ -18,6 +18,7 @@
 (defclass scene ()
   ((plane :initarg :plane :initform (make-instance 'cartesian-plane) :accessor scene-plane)
    (dots :initarg :dots :initform nil :accessor scene-dots)
+   (plots :initarg :plots :initform nil :accessor scene-plots)
    (close-requested :initform nil :accessor scene-close-requested)
    (drag-position :initform nil :accessor scene-drag-position))
   (:documentation "Live canvas state, retained independently of the window."))
@@ -34,22 +35,26 @@
     (raylib:clear-background :white)
     (when (scene-plane scene)
       (grid (scene-plane scene))
-      (axis (scene-plane scene)))
+      (axis (scene-plane scene))
+      (dolist (plot (scene-plots scene))
+        (draw-on-plane plot (scene-plane scene))))
     (dolist (dot (scene-dots scene))
       (draw dot))))
 
 (defun run (&key (width 1024) (height 768) (title "Mathbook")
                  (plane (make-instance 'cartesian-plane :width width :height height))
-                 (dots nil) scene before-frame on-frame-error)
-  "Open a white canvas with PLANE and DOTS until closed or Escape is pressed.
+                 (dots nil) (plots nil) scene before-frame on-frame-error)
+  "Open a white canvas with PLANE, PLOTS, and DOTS until closed or Escape is pressed.
 Call this on the main thread of your Lisp process."
   #+(and sbcl darwin)
   (unless (sb-thread:main-thread-p)
     (error "Mathbook's window must run on the main thread on macOS. Launch it from a standalone SBCL process; SLY and SLIME evaluate on worker threads."))
-  (setf scene (or scene (make-instance 'scene :plane plane :dots dots))
+  (setf scene (or scene (make-instance 'scene :plane plane :dots dots :plots plots))
         *scene* scene
         (scene-close-requested scene) nil
         (scene-drag-position scene) nil)
+  ;; The multisampled framebuffer must be requested before window creation.
+  (raylib:set-config-flags :flag-msaa-4x-hint)
   (raylib:with-window (width height title)
     (unless (raylib:is-window-ready)
       (error "Could not initialize the Mathbook window."))

@@ -1,6 +1,6 @@
 (defsystem "mathbook"
   :version "0.0.1"
-  :depends-on ("uiop" "cl-raylib")
+  :depends-on ("uiop" "cl-raylib" "3d-vectors")
   :components ((:module "src"
                 :serial t
                 :components
@@ -8,6 +8,8 @@
                  (:file "dot")
                  (:file "line")
                  (:file "cartesian-plane")
+                 (:file "real-function")
+                 (:file "function-plot")
                  (:file "main"))))
   :description "An interactive mathematics notebook combining geometry, graphing, and live computation."
   :in-order-to ((test-op (test-op "mathbook/tests"))))
@@ -16,8 +18,10 @@
   :depends-on ("mathbook"
                "rove")
   :components ((:module "tests"
+                :serial t
                 :components
-                ((:file "main"))))
+                ((:file "main")
+                 (:file "function-plot"))))
   :description "Test system for mathbook"
   ;; Rove's file discovery assumes ASDF's default cache; select registered tests.
   :perform (test-op (op c)

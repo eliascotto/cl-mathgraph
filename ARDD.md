@@ -80,8 +80,9 @@ REPL disappear when Lisp exits. Agree on who is editing a particular file.
 
 ## What stays live
 
-`mathbook:*scene*` holds the plane and dots. Change them with `scene-plane`,
-`scene-dots`, and their existing accessors. The main thread processes queued
+`mathbook:*scene*` holds the plane, dots, and function plots. Change them with
+`scene-plane`, `scene-dots`, `scene-plots`, and their existing accessors.
+The main thread processes queued
 evaluations **between frames**, then calls `mathbook:run-frame`. Reloading drawing
 methods or that function affects subsequent frames. Changing a macro requires
 recompiling its callers; redefining an already executing loop does not replace it.
@@ -97,6 +98,15 @@ Reopening reuses the scene. `stop` exits the development process. A frame error
 is reported in the launch terminal and `mathbook-dev:*last-frame-error*`; the
 queue stays available so you can fix and reload code. `status` includes the last
 recorded frame error. Ordinary evaluation errors return to the shared transcript.
+
+Function plots cache their sampled geometry. After reloading sampling code or
+code used by an evaluator, invalidate the live plots to resample the next frame:
+
+```sh
+./ardd eval '(mapc (function invalidate-plot) (scene-plots *scene*))'
+```
+
+See [Function plots](README.md#function-plots) for the class API and a live example.
 
 Keep evaluations finite: a long evaluation pauses rendering. The queue cancels
 requests that have not started within ten seconds; it does not forcibly terminate

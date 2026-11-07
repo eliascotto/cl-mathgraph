@@ -12,8 +12,8 @@ and live computations in a single notebook.
 This repository starts from a Common Lisp project skeleton generated with
 [cl-project](https://github.com/fukamachi/cl-project) and opens a Raylib window
 with a white canvas, black Cartesian axes, a subdivided gray grid, mouse-wheel
-zoom, and click-and-drag panning.
-Geometric constructions, plotting, notebook cells, evaluation,
+zoom, click-and-drag panning, and plots of Lisp functions of one real variable.
+Geometric constructions, user-entered formulas, notebook cells, notebook evaluation,
 persistence, and interface controls are not implemented yet.
 
 ## Requirements
@@ -23,7 +23,8 @@ persistence, and interface controls are not implemented yet.
 - `cl-raylib`, available through Quicklisp's `local-projects` directory, with its
   native raylib library available to the bindings.
 
-The application system depends on `cl-raylib` and UIOP (bundled with ASDF).
+The application system depends on `cl-raylib`, `3d-vectors` (also used by the
+Raylib bindings), and UIOP (bundled with ASDF).
 `cl-project` is used to generate the skeleton and is not required to load Mathbook.
 
 All application source files share the `mathbook` package, defined once in
@@ -77,7 +78,8 @@ After loading, call the exported entry point on the Lisp process's main thread
 
 This opens a 1024 × 768 window titled "Mathbook", with centered black x/y
 axes, one pixel thick, with numbered ticks. No sample dots or line segments are
-shown. It redraws the canvas
+shown. The window requests 4× MSAA for smoother curve and line edges on supported
+graphics hardware. It redraws the canvas
 at 60 FPS, and blocks until you close the window or press Escape. The window is
 also cleaned up if the drawing loop exits through an error.
 
@@ -185,6 +187,83 @@ inside the drawing frame.
 Use `:plane nil` to hide the axes and grid. Dots and lines still use canvas pixel
 coordinates and do not scale with the plane yet.
 
+## Function plots
+
+`real-function` represents a mathematical function independently of drawing.
+Its required `:evaluator` accepts one real x value; `:name` is an optional label.
+`evaluate-at` calls the evaluator and propagates its results and errors.
+`function-name` and `function-evaluator` support `setf`.
+
+`function-plot` references a `real-function` through `:function` and draws
+`y=f(x)` in world coordinates. Pass plots to `run`:
+
+```lisp
+(mathbook:run
+ :plots (list
+         (make-instance 'mathbook:function-plot
+                        :function (make-instance 'mathbook:real-function
+                                                 :name "x²"
+                                                 :evaluator (lambda (x) (* x x)))
+                        :color :blue :thickness 2)))
+```
+
+Plots follow the plane when panning and zooming. They appear after the grid and
+axes and before pixel-coordinate dots and lines. With `:plane nil`, plots are
+not drawn. The initial scene has no plots unless you supply them.
+
+Plot initialization arguments and corresponding `setf` accessors are:
+
+| Argument | Accessor | Default |
+| --- | --- | --- |
+| `:function` | `plot-function` | Required |
+| `:color` | `plot-color` | `:blue` |
+| `:thickness` | `plot-thickness` | `2` pixels |
+| `:visible-p` | `plot-visible-p` | `t` |
+| `:x-min`, `:x-max` | `plot-x-min`, `plot-x-max` | `nil` (visible x range) |
+| `:sample-spacing` | `plot-sample-spacing` | `8` pixels |
+| `:tolerance` | `plot-tolerance` | `0.75d0` pixels |
+| `:max-evaluations` | `plot-max-evaluations` | `8193` per resampling |
+
+Domain bounds are inclusive world coordinates; `x-min` must not exceed `x-max`.
+Thickness, sample spacing, and tolerance must be positive; the evaluation budget
+must be an integer of at least 3. The sampler starts across the visible domain
+and refines intervals using their midpoint error, up to 12 refinement levels.
+Errors, complex values, NaNs, and infinities create gaps. Intervals that remain
+unresolved at the refinement or evaluation limit are omitted. Segments are clipped
+to the canvas before being sent to Raylib.
+
+Discontinuity detection is approximate: finite sampling can miss narrow features,
+oscillations, and some discontinuities. The evaluation budget limits the number
+of calls, not the time spent inside an evaluator; use functions that return
+promptly and avoid side effects.
+
+`plot-segments` returns cached pixel segments `(x1 y1 x2 y2)` without drawing;
+treat the returned list as read-only. Geometry updates when the evaluator,
+domain, sampling settings, or plane view changes. After changing state captured
+by an evaluator, or reloading code used by it, call `(invalidate-plot plot)`.
+Changing the color, thickness, or visibility does not require resampling.
+
+`world-to-screen` and `screen-to-world` return two values without rounding and
+share the plane's pan and zoom transform. Positive world y points upward.
+`(draw-on-plane plot plane)` renders a plot inside an active drawing frame.
+These functions leave the existing one-argument `draw` interface intact.
+
+In the persistent ARDD session, add a plot without opening another window:
+
+```sh
+./ardd --transport emacsclient eval - <<'LISP'
+(push (make-instance 'function-plot
+                     :function (make-instance 'real-function
+                                              :name "sin(x)"
+                                              :evaluator #'sin)
+                     :color :red)
+      (scene-plots *scene*))
+LISP
+```
+
+Text formulas and their parser are the next phase; the plotting API currently
+accepts Lisp evaluators.
+
 ## Tests
 
 With Quicklisp loaded, run the following from the repository root:
@@ -201,6 +280,10 @@ the centered origin, alignment between grid lines, ticks, and labels, and the
 16-square cell subdivisions across zoom levels, panning, zoom after panning,
 and mouse drag/release/focus behavior.
 Drawing commands are captured so the tests can run without opening a window.
+Function plot tests cover coordinate round trips, curve accuracy, clipping,
+domain restrictions, poles between sample points, invalid values, evaluation
+budgets, cache invalidation, and scene rendering. Run these in a separate Lisp
+process from the live ARDD canvas because they temporarily replace drawing functions.
 
 ## Project layout
 
@@ -211,8 +294,11 @@ src/package.lisp   Shared Mathbook package, UIOP imports, and public exports
 src/dot.lisp       Dot class and drawing method
 src/line.lisp      Line subclass and drawing method
 src/cartesian-plane.lisp  Cartesian plane class and axis method
+src/real-function.lisp    Mathematical function model and evaluation
+src/function-plot.lisp    Adaptive sampling, clipping, caching, and rendering
 src/main.lisp      Canvas window loop
 tests/main.lisp    Zoom, label, and drawing alignment tests
+tests/function-plot.lisp  Function evaluation, sampling, and rendering tests
 README.md         Project overview and development instructions
 ```
 

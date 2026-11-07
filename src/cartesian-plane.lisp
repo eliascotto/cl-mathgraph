@@ -20,6 +20,19 @@ UNIT-SPACING is the number of pixels per world unit at zoom 1."))
     (check-type magnification (real (0) *))
     (* base-spacing magnification)))
 
+(defun world-to-screen (plane x y)
+  "Return two pixel coordinates for world X, Y, without rounding.
+Positive world y points upward; positive screen y points downward."
+  (let ((scale (pixels-per-unit plane)))
+    (values (+ (/ (plane-width plane) 2) (* (- x (plane-center-x plane)) scale))
+            (- (/ (plane-height plane) 2) (* (- y (plane-center-y plane)) scale)))))
+
+(defun screen-to-world (plane x y)
+  "Return two world coordinates for canvas pixel X, Y."
+  (let ((scale (pixels-per-unit plane)))
+    (values (+ (plane-center-x plane) (/ (- x (/ (plane-width plane) 2)) scale))
+            (- (plane-center-y plane) (/ (- y (/ (plane-height plane) 2)) scale)))))
+
 (defgeneric pan (plane delta-x delta-y)
   (:documentation "Move PLANE with a drag of DELTA-X and DELTA-Y canvas pixels."))
 
@@ -56,10 +69,8 @@ UNIT-SPACING is the number of pixels per world unit at zoom 1."))
                                  ((< normalized (sqrt 10d0)) 2)
                                  ((< normalized (sqrt 50d0)) 5)
                                  (t 10)))))
-      (values (round (- (/ (plane-width plane) 2) (* (plane-center-x plane) scale)))
-              (round (+ (/ (plane-height plane) 2) (* (plane-center-y plane) scale)))
-              (* scale step)
-              step))))
+      (multiple-value-bind (origin-x origin-y) (world-to-screen plane 0 0)
+        (values (round origin-x) (round origin-y) (* scale step) step)))))
 
 (defun axis-label (index step)
   "Format a tick value without float artifacts or unnecessary decimal zeroes."
