@@ -80,8 +80,9 @@ REPL disappear when Lisp exits. Agree on who is editing a particular file.
 
 ## What stays live
 
-`mathbook:*scene*` holds the plane, dots, and function plots. Change them with
-`scene-plane`, `scene-dots`, `scene-plots`, and their existing accessors.
+`mathbook:*scene*` holds the plane, dots, function plots, and footer input. Change them with
+`scene-plane`, `scene-dots`, `scene-plots`, `scene-input`, and their existing accessors.
+`(input-text (scene-input *scene*))` reads the footer text and supports `setf`.
 The main thread processes queued
 evaluations **between frames**, then calls `mathbook:run-frame`. Reloading drawing
 methods or that function affects subsequent frames. Changing a macro requires

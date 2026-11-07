@@ -12,9 +12,9 @@ and live computations in a single notebook.
 This repository starts from a Common Lisp project skeleton generated with
 [cl-project](https://github.com/fukamachi/cl-project) and opens a Raylib window
 with a white canvas, black Cartesian axes, a subdivided gray grid, mouse-wheel
-zoom, click-and-drag panning, and plots of Lisp functions of one real variable.
-Geometric constructions, user-entered formulas, notebook cells, notebook evaluation,
-persistence, and interface controls are not implemented yet.
+zoom, click-and-drag panning, plots of Lisp functions of one real variable, and
+a footer text input. Geometric constructions, formula parsing, notebook cells,
+notebook evaluation, persistence, and further interface controls are not implemented yet.
 
 ## Requirements
 
@@ -22,10 +22,21 @@ persistence, and interface controls are not implemented yet.
 - Quicklisp for loading dependencies, including Rove for tests.
 - `cl-raylib`, available through Quicklisp's `local-projects` directory, with its
   native raylib library available to the bindings.
+- [cl-raygui](https://github.com/eliascotto/cl-raygui), with its native raygui
+  library built against the same shared raylib installation (raylib 6.0 or newer).
 
-The application system depends on `cl-raylib`, `3d-vectors` (also used by the
+The application system depends on `cl-raylib`, `cl-raygui`, `3d-vectors` (also used by the
 Raylib bindings), and UIOP (bundled with ASDF).
 `cl-project` is used to generate the skeleton and is not required to load Mathbook.
+
+For a checkout at `~/dev/Lisp/cl-raygui`, register it with Quicklisp using a symlink
+(skip the link command if it already exists). On macOS, build its native library
+if needed using the repository's build helper:
+
+```sh
+ln -s ~/dev/Lisp/cl-raygui ~/quicklisp/local-projects/cl-raygui
+bash ~/dev/Lisp/cl-raygui/tools/build-macos.sh
+```
 
 All application source files share the `mathbook` package, defined once in
 `src/package.lisp`. It uses Common Lisp and UIOP, so UIOP utilities such as
@@ -116,7 +127,7 @@ Pass a list of dots to `run` to customize the canvas:
                            :x 200 :y 150 :radius 8 :color :blue)))
 ```
 
-Use `(mathbook:run :plane nil :dots nil)` for a blank canvas. The `dot-x`, `dot-y`,
+Use `(mathbook:run :plane nil :dots nil :input nil)` for a blank canvas. The `dot-x`, `dot-y`,
 `dot-radius`, and `dot-color` accessors support `setf`. The `draw` generic function
 draws a dot inside an active Raylib drawing frame; `run` calls it each frame.
 
@@ -261,8 +272,34 @@ In the persistent ARDD session, add a plot without opening another window:
 LISP
 ```
 
-Text formulas and their parser are the next phase; the plotting API currently
-accepts Lisp evaluators.
+## Footer input
+
+The window reserves 88 pixels below the chart for a raygui group box containing
+an editable `f(x) =` field. Click the field to edit; Enter or a click outside
+finishes editing. The field stores text without parsing or plotting it yet.
+Mouse wheel and drag input over the footer do not move the chart, and chart
+content is clipped above the footer.
+
+The footer and axis labels use installed Inter with smooth texture filtering.
+If Inter is unavailable, Mathbook tries macOS San Francisco, Arial, and common
+Linux sans-serif fonts before falling back to Raylib's built-in font. Set
+`MATHBOOK_FONT` to a TrueType font file to prefer another font. Custom fonts are
+loaded for each window and released before its graphics context closes.
+
+`scene-input` holds a `function-input` object. `input-text` supports `setf`,
+so the shared REPL can inspect or replace the text:
+
+```lisp
+(input-text (scene-input *scene*))
+(setf (input-text (scene-input *scene*)) "sin(x)")
+```
+
+The native input buffer holds up to 4095 UTF-8 bytes. It is reused between frames
+and freed when the window closes, while the scene retains its Lisp text for
+reopening. `(mathbook:run :input nil)` hides the footer. To start with text, pass
+`:input (make-instance 'mathbook:function-input :text "sin(x)")`.
+
+Formula parsing is the next phase; the plotting API currently accepts Lisp evaluators.
 
 ## Tests
 
@@ -284,6 +321,8 @@ Function plot tests cover coordinate round trips, curve accuracy, clipping,
 domain restrictions, poles between sample points, invalid values, evaluation
 budgets, cache invalidation, and scene rendering. Run these in a separate Lisp
 process from the live ARDD canvas because they temporarily replace drawing functions.
+Footer tests cover layout, chart input isolation, edit state, and native buffer
+cleanup during normal and failed window exits.
 
 ## Project layout
 
@@ -291,14 +330,17 @@ process from the live ARDD canvas because they temporarily replace drawing funct
 mathbook.asd       Application and test system definitions
 run                Launch the window in a standalone SBCL process
 src/package.lisp   Shared Mathbook package, UIOP imports, and public exports
+src/typography.lisp       Shared sans-serif font loading, drawing, and cleanup
 src/dot.lisp       Dot class and drawing method
 src/line.lisp      Line subclass and drawing method
 src/cartesian-plane.lisp  Cartesian plane class and axis method
 src/real-function.lisp    Mathematical function model and evaluation
 src/function-plot.lisp    Adaptive sampling, clipping, caching, and rendering
+src/function-input.lisp   Footer text entry and native buffer ownership
 src/main.lisp      Canvas window loop
 tests/main.lisp    Zoom, label, and drawing alignment tests
 tests/function-plot.lisp  Function evaluation, sampling, and rendering tests
+tests/function-input.lisp Footer layout, editing, and lifecycle tests
 README.md         Project overview and development instructions
 ```
 

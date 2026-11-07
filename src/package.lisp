@@ -1,6 +1,7 @@
 (defpackage #:mathbook
   (:use #:cl #:uiop)
-  (:export #:run #:scene #:*scene* #:scene-plane #:scene-dots #:scene-plots #:scene-close-requested
+  (:export #:run #:scene #:*scene* #:scene-plane #:scene-dots #:scene-plots #:scene-input
+           #:scene-close-requested #:function-input #:input-text #:input-editing-p
            #:run-frame #:dot #:dot-x #:dot-y #:dot-radius #:dot-color #:draw
            #:line #:line-end-x #:line-end-y
            #:cartesian-plane #:axis #:grid #:plane-grid-color #:plane-width #:plane-height
