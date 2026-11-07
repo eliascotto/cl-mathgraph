@@ -1,0 +1,108 @@
+(in-package :mathbook/tests/main)
+
+(deftest footer-layout
+  (let* ((plane (make-instance 'mathbook:cartesian-plane))
+         (scene (make-instance 'mathbook:scene :plane plane)))
+    (ok (= 680 (mathbook::update-scene-layout scene 1024 768)))
+    (ok (= 1024 (mathbook:plane-width plane)))
+    (ok (= 680 (mathbook:plane-height plane)))
+    (ok (= 512 (mathbook::update-scene-layout scene 800 600)))
+    (setf (mathbook:scene-input scene) nil)
+    (ok (= 600 (mathbook::update-scene-layout scene 800 600)))
+    (ok (= 600 (mathbook:plane-height plane)))
+    (setf (mathbook:scene-plane scene) nil)
+    (ok (= 600 (mathbook::update-scene-layout scene 800 600)))))
+
+(deftest footer-excludes-chart-input
+  (let* ((plane (make-instance 'mathbook:cartesian-plane))
+         (names '(raylib:get-mouse-wheel-move raylib:is-window-focused
+                  raylib:is-mouse-button-down raylib:is-mouse-button-pressed
+                  raylib:get-mouse-x raylib:get-mouse-y))
+         (originals (mapcar #'symbol-function names))
+         (position '(100 . 100)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'raylib:get-mouse-wheel-move) (lambda () 1)
+                 (symbol-function 'raylib:is-window-focused) (lambda () t)
+                 (symbol-function 'raylib:is-mouse-button-down) (lambda (button) (declare (ignore button)) t)
+                 (symbol-function 'raylib:is-mouse-button-pressed) (lambda (button) (declare (ignore button)) nil)
+                 (symbol-function 'raylib:get-mouse-x) (lambda () (car position))
+                 (symbol-function 'raylib:get-mouse-y) (lambda () (cdr position)))
+           (ok (null (mathbook::update-plane-input plane '(10 . 20) :enabled-p nil)))
+           (ok (= 1 (mathbook:plane-zoom plane)))
+           (ok (= 0 (mathbook:plane-center-x plane)))
+           (ok (= 0 (mathbook:plane-center-y plane)))
+           (ok (equal '(100 . 100) (mathbook::update-plane-input plane nil)))
+           (ok (> (mathbook:plane-zoom plane) 1))
+           ;; Resuming from a cleared drag does not jump by the footer movement.
+           (ok (= 0 (mathbook:plane-center-x plane))))
+      (mapc (lambda (name original) (setf (symbol-function name) original)) names originals))))
+
+(deftest footer-editing-and-buffer-lifecycle
+  (let* ((input (make-instance 'mathbook:function-input :text "sin(x)"))
+         (names '(raygui:gui-group-box raygui:gui-label raygui:gui-text-box
+                  raylib:draw-rectangle raylib:draw-line))
+         (originals (mapcar #'symbol-function names))
+         (pressed nil))
+    (unwind-protect
+         (progn
+           (dolist (name names)
+             (setf (symbol-function name) (lambda (&rest args) (declare (ignore args)) nil)))
+           (let ((buffer (mathbook::ensure-input-buffer input)))
+             (ok (string= "sin(x)" (raygui:text-buffer-string buffer)))
+             (setf (mathbook:input-text input) "x^2")
+             (ok (eq buffer (mathbook::ensure-input-buffer input)))
+             (ok (string= "x^2" (raygui:text-buffer-string buffer))))
+           (setf (symbol-function 'raygui:gui-text-box)
+                 (lambda (bounds buffer editing)
+                   (ok (>= (raylib:rectangle-y bounds) 680))
+                   (ok (= 904 (raylib:rectangle-width bounds)))
+                   (ok (eql editing (mathbook:input-editing-p input)))
+                   (setf (raygui:text-buffer-string buffer) "cos(x)")
+                   (values "cos(x)" (if pressed raygui:+result-pressed+ 0))))
+           (mathbook::draw-function-footer input 1024 768 680)
+           (ok (string= "cos(x)" (mathbook:input-text input)))
+           (ok (not (mathbook:input-editing-p input)))
+           (setf pressed t)
+           (mathbook::draw-function-footer input 1024 768 680)
+           (ok (mathbook:input-editing-p input))
+           (mathbook::draw-function-footer input 1024 768 680)
+           (ok (not (mathbook:input-editing-p input)))
+           (let ((old-buffer (mathbook::input-buffer input)))
+             (mathbook::release-input-buffer input)
+             (ok (null (mathbook::input-buffer input)))
+             (ok (signals (raygui:text-buffer-string old-buffer) 'error))
+             (ok (string= "cos(x)" (mathbook:input-text input)))
+             (ok (string= "cos(x)" (raygui:text-buffer-string (mathbook::ensure-input-buffer input))))))
+      (mathbook::release-input-buffer input)
+      (mapc (lambda (name original) (setf (symbol-function name) original)) names originals))))
+
+(deftest footer-cleanup-on-window-exit
+  (let* ((input (make-instance 'mathbook:function-input))
+         (scene (make-instance 'mathbook:scene :plane nil :input input))
+         (names '(raylib:init-window raylib:close-window raylib:set-config-flags
+                  raylib:is-window-ready raylib:set-target-fps raylib:window-should-close
+                  mathbook::initialize-interface mathbook:run-frame))
+         (originals (mapcar #'symbol-function names))
+         (previous-scene mathbook:*scene*) (frames 0) (fail nil))
+    (unwind-protect
+         (progn
+           (dolist (name names)
+             (setf (symbol-function name) (lambda (&rest args) (declare (ignore args)) nil)))
+           (setf (symbol-function 'raylib:is-window-ready) (lambda () t)
+                 (symbol-function 'raylib:window-should-close) (lambda () (> frames 0))
+                 (symbol-function 'mathbook:run-frame)
+                 (lambda (scene)
+                   (incf frames)
+                   (setf (mathbook:input-text (mathbook:scene-input scene)) "x + 1")
+                   (mathbook::ensure-input-buffer (mathbook:scene-input scene))
+                   (when fail (error "Frame failed"))))
+           (mathbook:run :scene scene)
+           (ok (null (mathbook::input-buffer input)))
+           (ok (string= "x + 1" (mathbook:input-text input)))
+           (setf frames 0 fail t)
+           (ok (signals (mathbook:run :scene scene) 'error))
+           (ok (null (mathbook::input-buffer input))))
+      (setf mathbook:*scene* previous-scene)
+      (mathbook::release-input-buffer input)
+      (mapc (lambda (name original) (setf (symbol-function name) original)) names originals))))

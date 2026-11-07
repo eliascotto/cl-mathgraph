@@ -29,6 +29,8 @@ In Emacs, `M-: (locate-library "sly")` shows its location.
 
 4. In the connected SLY REPL buffer, run `M-x mathbook-ardd-use-connection`.
    This pins the agent to that connection and opens `*Mathbook ARDD*`.
+   Ordinary REPL inputs, printed output, returned values, and debugger notes
+   from this connection are also mirrored into that buffer.
    Emacs also starts watching `.ardd/` for agent requests.
 
 ## Work together
@@ -63,9 +65,10 @@ a named Emacs server (or set `ARDD_EMACS_SOCKET`). `EMACSCLIENT` can specify its
 executable path. This transport prints results as quoted Emacs strings.
 
 You can use `M-x mathbook-ardd-eval` to evaluate through this same path and
-transcript. Ordinary SLY evaluation, inspection, and `C-c C-c` still work, but
-their results stay in SLY's usual buffers. For scene changes from the SLY REPL,
-serialize them on the main thread:
+transcript. Normal SLY REPL evaluation is mirrored as `[human/SLY]` entries;
+it still runs once on SLY's usual thread. Inspection and source-buffer commands
+such as `C-c C-c` keep their usual SLY buffers. Use `mathbook-ardd-eval` for
+main-thread evaluation, or serialize scene changes from the SLY REPL explicitly:
 
 ```lisp
 (mathbook-dev:on-main-thread

@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'sly)
 (require 'json)
+(require 'comint)
 
 (defvar mathbook-ardd-connection nil
   "SLY connection explicitly selected for agent evaluations.")
@@ -81,6 +82,50 @@
       (goto-char (point-max))
       (insert text))))
 
+(defun mathbook-ardd--selected-repl-p ()
+  "Whether the current buffer is a REPL on the pinned Mathbook connection."
+  (and mathbook-ardd-connection
+       (derived-mode-p 'sly-mrepl-mode)
+       (eq sly-buffer-connection mathbook-ardd-connection)))
+
+(defun mathbook-ardd--mirror-input (source)
+  "Record ordinary REPL input without evaluating it a second time."
+  (when (and (mathbook-ardd--selected-repl-p) (not mathbook-ardd-busy))
+    (mathbook-ardd--append
+     (format "\n[%s human/SLY]\n%s%s" (format-time-string "%H:%M:%S")
+             source (if (string-suffix-p "\n" source) "" "\n")))))
+
+(defun mathbook-ardd--mirror-output (text)
+  "Mirror SLY's printed output, preserving the filter's original TEXT."
+  (when (and (mathbook-ardd--selected-repl-p) (not mathbook-ardd-busy))
+    (mathbook-ardd--append (substring-no-properties text)))
+  text)
+
+(defun mathbook-ardd--mirror-result (text)
+  "Mirror comint results and debugger notes, excluding SLY's prompts.
+SLY sends printed output through its separate output filter instead."
+  (when (and (mathbook-ardd--selected-repl-p) (not mathbook-ardd-busy)
+             (> (length text) 0)
+             (not (get-text-property 0 'sly-mrepl--prompt text)))
+    (mathbook-ardd--append
+     (if (get-text-property 0 'sly-mrepl--result text)
+         (concat "=> " (substring-no-properties text) "\n")
+       (substring-no-properties text)))))
+
+(defun mathbook-ardd--setup-repl ()
+  "Mirror the selected REPL through buffer-local input and output hooks."
+  (when (derived-mode-p 'sly-mrepl-mode)
+    (dolist (entry '((comint-input-filter-functions . mathbook-ardd--mirror-input)
+                     (comint-output-filter-functions . mathbook-ardd--mirror-result)
+                     (sly-mrepl-output-filter-functions . mathbook-ardd--mirror-output)))
+      (if (mathbook-ardd--selected-repl-p)
+          (add-hook (car entry) (cdr entry) nil t)
+        (remove-hook (car entry) (cdr entry) t)))))
+
+(defun mathbook-ardd--refresh-repls ()
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer (mathbook-ardd--setup-repl))))
+
 (defun mathbook-ardd-use-connection ()
   "Pin agent evaluations to the current SLY connection.
 Run this in the REPL connected to ./dev-repl, not another Lisp."
@@ -96,11 +141,12 @@ Run this in the REPL connected to ./dev-repl, not another Lisp."
                       "CL-USER")
       (user-error "This Lisp was not started with ./dev-repl"))
     (setq mathbook-ardd-connection connection)
+    (mathbook-ardd--refresh-repls)
     (mathbook-ardd--append
      (format "\nConnected: %s\n" (sly-connection-name connection)))
     (display-buffer mathbook-ardd-buffer)
     (mathbook-ardd-start-mailbox)
-    (message "Mathbook ARDD is ready for shared evaluation")))
+    (message "Mathbook ARDD is ready; SLY REPL input and output are mirrored")))
 
 (defun mathbook-ardd-eval (source &optional label)
   "Evaluate Common Lisp SOURCE via the selected SLY connection.
@@ -141,6 +187,10 @@ Evaluations run serially on Mathbook's main thread between frames."
    (with-temp-buffer
      (let ((coding-system-for-read 'utf-8)) (insert-file-contents file))
      (buffer-string))))
+
+(add-hook 'sly-mrepl-hook #'mathbook-ardd--setup-repl)
+;; Also activate mirroring when this file is reloaded into an existing session.
+(mathbook-ardd--refresh-repls)
 
 (provide 'mathbook-ardd)
 ;;; ardd.el ends here
